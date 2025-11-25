@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Task Management System — Workly</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+
+  <style>
+    /* tiny extras to complement Tailwind */
+    body { opacity: 0; transition: opacity .28s ease; }
+    body.fade-in { opacity: 1; }
+
+    #toast { transform: translateY(-6px); transition: all .28s ease, opacity .28s ease; opacity: 0; }
+    #toast.show { opacity: 1; transform: translateY(0); }
+
+    .task-item-animate { animation: popIn .32s ease; }
+    @keyframes popIn { from { opacity: 0; transform: scale(.98); } to { opacity: 1; transform: scale(1); } }
+
+    .task-item-remove { animation: fadeOut .28s ease forwards; }
+    @keyframes fadeOut { to { opacity: 0; height: 0; margin: 0; padding: 0; } }
+
+    #panel { transform: translateX(100%); transition: transform .28s ease; }
+    #panel.open { transform: translateX(0%); }
+    #overlay { display: none; opacity: 0; transition: opacity .2s ease; }
+    #overlay.open { display: block; opacity: 1; }
+
+    .calendar-today {
+      outline: 2px solid #f59e0b;
+      outline-offset: 2px;
+      border-radius: 6px;
+    }
+
+    .muted { color: #6b7280; }
+
+    /* Scrollable task list */
+    #taskList { max-height: 420px; overflow-y: auto; padding-right: 6px; box-sizing: border-box; }
+    #todayTaskList { max-height: 200px; overflow-y: auto; padding-right: 6px; box-sizing: border-box; }
+
+    /* scrollbar polish */
+    #taskList::-webkit-scrollbar, #todayTaskList::-webkit-scrollbar { width: 7px; height: 7px; }
+    #taskList::-webkit-scrollbar-thumb, #todayTaskList::-webkit-scrollbar-thumb {
+      background: #e6e8eb; border-radius: 6px;
+    }
+    #taskList::-webkit-scrollbar-thumb:hover, #todayTaskList::-webkit-scrollbar-thumb:hover {
+      background: #cbd5e0;
+    }
+
+    /* small responsive tweaks */
+    @media (max-width: 900px) {
+      main.col-span-8, aside.col-span-4 { grid-column: span 12 / span 12; }
+      main.col-span-8 { margin-bottom: 1rem; }
+    }
+
+    
+  </style>
+</head>
+
+<body class="bg-gray-50 text-gray-900 min-h-screen">
+
+  <div class="max-w-7xl mx-auto p-6">
+    <header class="flex items-center justify-between mb-6">
+      <div class="flex items-center gap-3">
+        <img src="assets/logo.png" alt="Workly" class="w-10 h-10 object-contain" />
+        <div>
+          <div class="text-lg font-semibold">Task Management System</div>
+          <div class="text-sm text-gray-500">Simple • Clean • Minimal</div>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <button id="prevMonth" class="px-3 py-1 border rounded text-sm text-gray-600 hover:bg-gray-100">Prev</button>
+        <div id="currentMonth" class="text-sm font-medium"></div>
+        <button id="nextMonth" class="px-3 py-1 border rounded text-sm text-gray-600 hover:bg-gray-100">Next</button>
+
+        <button id="exportBtn" class="ml-2 px-3 py-1 border rounded text-sm text-gray-600 hover:bg-gray-100 cursor-pointer">Export PDF</button>
+        <label for="importFile" class="ml-2 px-3 py-1 border rounded text-sm text-gray-600 hover:bg-gray-100 cursor-pointer">Import CSV</label>
+        <input id="importFile" type="file" accept=".csv" class="hidden" />
+        <button id="deleteAllBtn" 
+        class="ml-4 px-3 py-1 border rounded text-sm text-red-600 hover:bg-red-50">
+    Delete All
+</button>
+
+        <button id="logoutBtn" class="ml-4 px-3 py-1 border rounded text-sm text-red-600 hover:bg-red-50">Logout</button>
+      </div>
+    </header>
+
+    <div class="grid grid-cols-12 gap-6">
+      <!-- Calendar -->
+      <main class="col-span-8 bg-white p-4 rounded shadow-sm">
+        <div class="flex items-start justify-between">
+          <h2 id="calendarTitle" class="text-base font-semibold mb-4">Month</h2>
+          <div class="text-sm text-gray-500">Click a day to filter tasks</div>
+        </div>
+        <div id="calendar" class="grid grid-cols-7 gap-2 text-sm"></div>
+
+        <!-- Today's tasks below calendar -->
+        <section class="mt-4">
+          <h3 class="text-sm font-semibold mb-3">Today's Tasks <span id="todayCount" class="text-gray-500 text-sm"></span></h3>
+          <div id="todayTaskList" class="space-y-3 text-sm"></div>
+        </section>
+      </main>
+
+      <!-- Sidebar / Tasks -->
+      <aside class="col-span-4 bg-white p-4 rounded shadow-sm">
+        <label class="text-xs text-gray-500">Category</label>
+        <div class="grid grid-cols-2 gap-2 my-2">
+          <button class="py-1 px-2 border rounded text-sm filter-cat" data-cat="">All</button>
+          <button class="py-1 px-2 border rounded text-sm filter-cat" data-cat="Work">Work</button>
+          <button class="py-1 px-2 border rounded text-sm filter-cat" data-cat="Personal">Personal</button>
+          <button class="py-1 px-2 border rounded text-sm filter-cat" data-cat="Study">Study</button>
+          <button class="py-1 px-2 border rounded text-sm filter-cat" data-cat="Shopping">Shopping</button>
+          <button class="py-1 px-2 border rounded text-sm filter-cat" data-cat="Others">Others</button>
+        </div>
+
+        <div class="flex gap-2 mb-4">
+          <select id="filterPriority" class="flex-1 p-2 border rounded text-sm">
+            <option value="">All priorities</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+
+          <select id="filterStatus" class="flex-1 p-2 border rounded text-sm">
+            <option value="">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="completed">Completed</option>
+          </select>
+        </div>
+
+        <h3 class="text-sm font-semibold mb-2">Tasks</h3>
+        <div id="taskList" class="space-y-3 mb-4"></div>
+
+        <hr class="my-4">
+
+        <h4 class="text-sm font-semibold mb-2">Add Task</h4>
+        <form id="addTaskForm" class="space-y-2">
+          <input name="title" placeholder="Title" required class="w-full p-2 border rounded text-sm" />
+          <input type="date" name="due_date" class="w-full p-2 border rounded text-sm" />
+
+          <select name="category" required class="w-full p-2 border rounded text-sm">
+            <option value="">Select category</option>
+            <option>Work</option>
+            <option>Personal</option>
+            <option>Study</option>
+            <option>Shopping</option>
+            <option>Others</option>
+          </select>
+
+          <select name="priority" class="w-full p-2 border rounded text-sm">
+            <option value="low">Low</option>
+            <option value="medium" selected>Medium</option>
+            <option value="high">High</option>
+          </select>
+
+          <div class="flex gap-2">
+            <button type="submit" class="flex-1 py-2 bg-gray-900 text-white rounded text-sm">Add</button>
+          </div>
+        </form>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="hidden fixed top-5 right-5 text-white px-4 py-2 rounded shadow-lg z-50"></div>
+
+  <!-- Overlay & Edit panel -->
+  <div id="overlay" class="fixed inset-0 bg-black bg-opacity-30 hidden z-40"></div>
+
+  <div id="panel" class="fixed right-0 top-0 h-full w-96 max-w-full bg-white shadow-xl transform translate-x-full transition-transform duration-300 z-50 rounded-l-lg">
+    <div class="p-6 h-full flex flex-col">
+      <div class="flex items-center justify-between mb-4">
+        <h3 id="panelTitle" class="text-lg font-semibold text-gray-800">Edit Task</h3>
+        <button id="closePanel" class="text-gray-500 hover:text-gray-700 transition">✕</button>
+      </div>
+
+      <form id="editForm" class="space-y-4 flex-1 overflow-y-auto">
+        <input type="hidden" name="id" />
+
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Title</label>
+          <input name="title" class="w-full p-2 border rounded text-sm focus:ring focus:ring-gray-200" />
+        </div>
+
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Due Date</label>
+          <input type="date" name="due_date" class="w-full p-2 border rounded text-sm focus:ring focus:ring-gray-200" />
+        </div>
+
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Priority</label>
+          <select name="priority" class="w-full p-2 border rounded text-sm focus:ring focus:ring-gray-200">
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Category</label>
+          <select name="category" class="w-full p-2 border rounded text-sm focus:ring focus:ring-gray-200">
+            <option value="">Select category</option>
+            <option>Work</option>
+            <option>Personal</option>
+            <option>Study</option>
+            <option>Shopping</option>
+            <option>Others</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Status</label>
+          <select name="status" class="w-full p-2 border rounded text-sm focus:ring focus:ring-gray-200">
+            <option value="pending">Pending</option>
+            <option value="completed">Completed</option>
+          </select>
+        </div>
+
+        <div class="flex items-center gap-3 pt-2">
+          <button type="submit" class="flex-1 py-2 bg-gray-900 text-white rounded text-sm hover:bg-black transition">Save</button>
+          <button id="deleteTaskBtn" type="button" class="px-3 py-2 border rounded text-sm text-red-600 hover:bg-red-50 transition">Delete</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', ()=> document.body.classList.add('fade-in'));
+  </script>
+
+  <script src="js/index.js"></script>
+</body>
+</html>
